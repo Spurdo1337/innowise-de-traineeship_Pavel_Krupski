@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+output/*.json
+output/*.xml
+!output/.gitkeep

@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: dorm_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-dorm_db}
+      POSTGRES_USER: ${DB_USER:-dorm_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dorm_password}
+    ports:
+      - "${DB_EXPOSED_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dorm_user} -d ${DB_NAME:-dorm_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: dorm_app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-dorm_db}
+      DB_USER: ${DB_USER:-dorm_user}
+      DB_PASSWORD: ${DB_PASSWORD:-dorm_password}
+    volumes:
+      - ./data:/data:ro
+      - ./output:/app/output
+
+volumes:
+  db_data:
