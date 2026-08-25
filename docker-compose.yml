@@ -1,0 +1,6 @@
+services:
+  pagila:
+    build: .
+    container_name: pagila
+    volumes:
+      - ./output:/output
