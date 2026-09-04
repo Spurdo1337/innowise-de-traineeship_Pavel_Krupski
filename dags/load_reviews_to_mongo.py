@@ -47,16 +47,20 @@ def load_to_mongo() -> None:
 
     client = _build_mongo_client()
     try:
-        collection = client[MONGO_DB][MONGO_COLLECTION]
-        collection.drop()
+        db = client[MONGO_DB]
+        staging_name = f"{MONGO_COLLECTION}_staging"
+        if staging_name in db.list_collection_names():
+            db.drop_collection(staging_name)
+        staging = db[staging_name]
 
         batch_size = 2000
         for start in range(0, len(records), batch_size):
             batch = records[start : start + batch_size]
             if batch:
-                collection.insert_many(batch, ordered=False)
+                staging.insert_many(batch, ordered=False)
 
-        collection.create_index("created_date")
+        staging.create_index("created_date")
+        staging.rename(MONGO_COLLECTION, dropTarget=True)
     finally:
         client.close()
 

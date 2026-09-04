@@ -24,7 +24,10 @@ def ensure_directories() -> None:
 
 def decide_branch() -> str:
     """Choose the empty-file branch or the processing branch."""
-    df = pd.read_csv(RAW_FILE)
+    try:
+        df = pd.read_csv(RAW_FILE)
+    except pd.errors.EmptyDataError:
+        return "log_empty_file"
     return "log_empty_file" if df.empty else "data_processing.replace_nulls"
 
 
@@ -33,13 +36,8 @@ def replace_null_values() -> None:
     ensure_directories()
     df = pd.read_csv(RAW_FILE)
 
-    object_columns = df.select_dtypes(include=["object"]).columns
-    for column in object_columns:
-        df[column] = (
-            df[column]
-            .replace(r"(?i)^\s*null\s*$", "-", regex=True)
-            .fillna("-")
-        )
+    df = df.replace(r"(?i)^\s*null\s*$", "-", regex=True)
+    df = df.fillna("-")
 
     df.to_csv(TMP_REPLACED_NULLS, index=False)
 
@@ -102,11 +100,11 @@ with DAG(
 ) as dag:
     wait_for_file = FileSensor(
         task_id="wait_for_raw_file",
-        filepath=str(RAW_FILE),
+        filepath=RAW_FILE.name,
         fs_conn_id="fs_default",
         poke_interval=30,
         timeout=60 * 60,
-        mode="poke",
+        mode="reschedule",
     )
 
     branch = BranchPythonOperator(
@@ -116,13 +114,7 @@ with DAG(
 
     log_empty_file = BashOperator(
         task_id="log_empty_file",
-        # Invoke via "bash <path>" explicitly rather than the bare path: the
-        # BashOperator runs this as `bash -c "<bash_command>"`, and a bare
-        # path there requires the script's execute bit to be set on disk
-        # (git doesn't reliably preserve +x on checkout, e.g. via a
-        # Windows clone or when core.fileMode is off). Prefixing with
-        # "bash " makes this work regardless of the file's permission bits.
-        bash_command=f"bash {EMPTY_LOG_SCRIPT}",
+        bash_command=f"bash {EMPTY_LOG_SCRIPT} ",
         env={"INPUT_FILE": str(RAW_FILE)},
     )
 
