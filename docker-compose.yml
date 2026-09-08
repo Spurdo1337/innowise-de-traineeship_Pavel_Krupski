@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:13
+    container_name: pagila_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pagila
+    ports:
+      - "5454:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db_init/01-pagila-schema.sql:/docker-entrypoint-initdb.d/01-pagila-schema.sql:ro
+      - ./db_init/02-pagila-data.sql:/docker-entrypoint-initdb.d/02-pagila-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pagila"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  spark:
+    image: quay.io/jupyter/pyspark-notebook:x86_64-2026-08-24
+    container_name: spark_app
+    ports:
+      - "8888:8888"
+      - "4040:4040"
+    volumes:
+      - ./work:/home/jovyan/work
+      - ./jars:/home/jovyan/jars
+      - ./output:/home/jovyan/work/output
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: mysecrettoken
+      JDBC_URL: "jdbc:postgresql://db:5432/pagila"
+      JDBC_USER: postgres
+      JDBC_PASSWORD: password
+      JDBC_DRIVER_PATH: /home/jovyan/jars/postgresql-42.7.13.jar
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
