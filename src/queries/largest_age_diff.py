@@ -11,10 +11,10 @@ class LargestAgeDiffQuery(Query):
         SELECT
             r.id   AS room_id,
             r.name AS room_name,
-            (
-                MAX(EXTRACT(YEAR FROM AGE(CURRENT_DATE, s.birthday))) -
-                MIN(EXTRACT(YEAR FROM AGE(CURRENT_DATE, s.birthday)))
-            )::int AS age_diff
+            ROUND(
+                ((MAX(s.birthday) - MIN(s.birthday)) / 365.25)::numeric,
+                2
+            ) AS age_diff
         FROM rooms r
         JOIN students s ON s.room_id = r.id
         GROUP BY r.id, r.name

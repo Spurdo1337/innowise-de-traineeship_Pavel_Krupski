@@ -12,7 +12,7 @@ class SmallestAverageAgeQuery(Query):
             r.id   AS room_id,
             r.name AS room_name,
             ROUND(
-                AVG(EXTRACT(YEAR FROM AGE(CURRENT_DATE, s.birthday)))::numeric,
+                (AVG(CURRENT_DATE - s.birthday) / 365.25)::numeric,
                 2
             ) AS avg_age
         FROM rooms r

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from loaders.base_loader import JSONLoader
 from models import Student
 
@@ -9,9 +11,7 @@ class StudentsLoader(JSONLoader):
         return Student(
             id=record["id"],
             name=record["name"],
-            # Source data looks like "2011-08-22T00:00:00.000000";
-            # only the date part is needed for a DATE column.
-            birthday=record["birthday"][:10],
+            birthday=datetime.fromisoformat(record["birthday"]).date(),
             sex=record["sex"],
             room_id=record["room"],
         )
