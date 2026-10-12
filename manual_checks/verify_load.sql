@@ -56,10 +56,10 @@ SHOW TABLES LIKE 'TMP_SILVER_BATCH' IN SCHEMA AIRLINE_DWH.GOLD;
 -- 7. The view is secure: is_secure = true.
 SHOW VIEWS LIKE 'SECURE_FACT_FLIGHTS_V' IN SCHEMA AIRLINE_DWH.ANALYTICS;
 
--- 8. Row-level security: as PUBLIC only three countries are visible.
+-- 8. Row-level security: as AIRLINE_BI only three countries are visible.
 --    Expected: Canada 5424, United Kingdom 1371, United States 22104.
 --    Run the three statements together, the last one switches the role back.
-USE ROLE PUBLIC;
+USE ROLE AIRLINE_BI;
 USE WAREHOUSE AIRLINE_DWH_WH;
 SELECT COUNTRY_NAME, COUNT(*) AS flights
 FROM AIRLINE_DWH.ANALYTICS.SECURE_FACT_FLIGHTS_V

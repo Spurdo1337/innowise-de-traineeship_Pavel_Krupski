@@ -4,7 +4,7 @@
 -- loaded data into AIRLINE_DWH.GOLD.FACT_FLIGHTS.
 --
 -- If you tested row-level security earlier in this same worksheet with
--- "USE ROLE PUBLIC;", that role stays active for the rest of the session
+-- "USE ROLE AIRLINE_BI;", that role stays active for the rest of the session
 -- until you switch it back - the line below makes sure this script always
 -- runs with a role that actually has rights to create objects in
 -- AIRLINE_DWH.ANALYTICS, regardless of what ran before it.

@@ -242,13 +242,24 @@ TABLE_STATEMENTS = [
     """,
     """
     -- The row access policy already grants ACCOUNTADMIN unconditional
-    -- access via CURRENT_ROLE() = 'ACCOUNTADMIN', so only PUBLIC (the role
-    -- every other role automatically inherits) needs to be listed here.
+    -- access via CURRENT_ROLE() = 'ACCOUNTADMIN'. The read-only role used by
+    -- Power BI (AIRLINE_BI) is listed here for the three visible countries.
     INSERT INTO AIRLINE_DWH.SECURITY.ALLOWED_COUNTRY_ROLES (ROLE_NAME, ALLOWED_COUNTRY_NAME)
     SELECT * FROM VALUES
-      ('PUBLIC', 'United States'),
-      ('PUBLIC', 'Canada'),
-      ('PUBLIC', 'United Kingdom')
+      ('AIRLINE_BI', 'United States'),
+      ('AIRLINE_BI', 'Canada'),
+      ('AIRLINE_BI', 'United Kingdom')
+    """,
+    """
+    CREATE OR REPLACE TABLE AIRLINE_DWH.SILVER.REJECTED_FLIGHTS (
+      RUN_ID STRING NOT NULL,
+      REJECT_REASON STRING NOT NULL,
+      SOURCE_FILE_NAME STRING,
+      PASSENGER_ID STRING,
+      ARRIVAL_AIRPORT STRING,
+      DEPARTURE_DATE_RAW STRING,
+      REJECTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+    )
     """,
 ]
 
@@ -325,16 +336,19 @@ SECURITY_STATEMENTS = [
     LEFT JOIN AIRLINE_DWH.GOLD.DIM_DATE D ON F.DATE_SK = D.DATE_SK
     """,
     """
-    GRANT SELECT ON VIEW AIRLINE_DWH.ANALYTICS.SECURE_FACT_FLIGHTS_V TO ROLE PUBLIC
+    CREATE ROLE IF NOT EXISTS AIRLINE_BI
     """,
     """
-    GRANT USAGE ON WAREHOUSE AIRLINE_DWH_WH TO ROLE PUBLIC
+    GRANT SELECT ON VIEW AIRLINE_DWH.ANALYTICS.SECURE_FACT_FLIGHTS_V TO ROLE AIRLINE_BI
     """,
     """
-    GRANT USAGE ON DATABASE AIRLINE_DWH TO ROLE PUBLIC
+    GRANT USAGE ON WAREHOUSE AIRLINE_DWH_WH TO ROLE AIRLINE_BI
     """,
     """
-    GRANT USAGE ON SCHEMA AIRLINE_DWH.ANALYTICS TO ROLE PUBLIC
+    GRANT USAGE ON DATABASE AIRLINE_DWH TO ROLE AIRLINE_BI
+    """,
+    """
+    GRANT USAGE ON SCHEMA AIRLINE_DWH.ANALYTICS TO ROLE AIRLINE_BI
     """,
 ]
 
@@ -342,13 +356,13 @@ SECURITY_STATEMENTS = [
 # 5. Stored procedures (Python, sharing snowflake/python_procs/audit_utils.py)
 # ============================================================
 
-BRONZE_LOAD_PROC = f'''
-CREATE OR REPLACE PROCEDURE AIRLINE_DWH.BRONZE.SP_LOAD_RAW_FROM_STAGE(P_LOCAL_FILE_NAME STRING)
+BRONZE_LOAD_PROC = '''
+CREATE OR REPLACE PROCEDURE AIRLINE_DWH.BRONZE.SP_LOAD_RAW_FROM_STAGE(P_LOCAL_FILE_NAME STRING, P_RUN_ID STRING)
 RETURNS STRING
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
-IMPORTS = ('@{UTIL_STAGE_FQN}/audit_utils.py')
+IMPORTS = ('@__UTIL_STAGE__/audit_utils.py')
 HANDLER = 'main'
 AS
 $$
@@ -360,9 +374,12 @@ from audit_utils import log_audit
 # ONE column, "Copy executed with 0 files processed." - not the usual
 # per-file row (file, status, rows_parsed, rows_loaded, ...) - so the
 # result parsing below has to handle both shapes.
+#
+# Every row of one file gets the same INGESTION_RUN_ID: the Airflow run id.
 
-def main(session, p_local_file_name):
+def main(session, p_local_file_name, p_run_id):
     safe_file_name = p_local_file_name.replace("'", "''")
+    safe_run_id = p_run_id.replace("'", "''")
 
     sql = f"""
         COPY INTO AIRLINE_DWH.BRONZE.RAW_FLIGHTS (
@@ -377,12 +394,16 @@ def main(session, p_local_file_name):
                 t.$6::NUMBER(3,0), t.$7::STRING, t.$8::STRING, t.$9::STRING,
                 t.$10::STRING, t.$11::STRING, t.$12::STRING, t.$13::STRING,
                 t.$14::STRING, t.$15::STRING, t.$16::STRING, t.$17::STRING,
-                t.$18::STRING, '{{safe_file_name}}'::STRING, CURRENT_TIMESTAMP(), UUID_STRING()
+                t.$18::STRING, '{safe_file_name}'::STRING, CURRENT_TIMESTAMP(), '{safe_run_id}'::STRING
             FROM @AIRLINE_DWH.BRONZE.RAW_STAGE t
         )
-        FILES = ('{{safe_file_name}}')
+        FILES = ('{safe_file_name}')
         FILE_FORMAT = (FORMAT_NAME = 'AIRLINE_DWH.BRONZE.CSV_FF')
     """
+
+    procedure = "AIRLINE_DWH.BRONZE.SP_LOAD_RAW_FROM_STAGE"
+    target = "AIRLINE_DWH.BRONZE.RAW_FLIGHTS"
+    source = "@AIRLINE_DWH.BRONZE.RAW_STAGE"
 
     try:
         rows = session.sql(sql).collect()
@@ -399,35 +420,52 @@ def main(session, p_local_file_name):
 
         details = "COPY INTO result: " + ", ".join(file_statuses)
         log_audit(
-            session, "AIRLINE_DWH.BRONZE.SP_LOAD_RAW_FROM_STAGE",
-            "AIRLINE_DWH.BRONZE.RAW_FLIGHTS", "@AIRLINE_DWH.BRONZE.RAW_STAGE",
+            session, p_run_id, procedure, target, source,
             total_loaded, 0, 0, "SUCCESS", details,
         )
-        return f"Bronze COPY INTO finished ({{', '.join(file_statuses)}}), rows loaded: {{total_loaded}}"
+        return "Bronze COPY INTO finished (" + ", ".join(file_statuses) + "), rows loaded: " + str(total_loaded)
     except Exception as err:
         log_audit(
-            session, "AIRLINE_DWH.BRONZE.SP_LOAD_RAW_FROM_STAGE",
-            "AIRLINE_DWH.BRONZE.RAW_FLIGHTS", "@AIRLINE_DWH.BRONZE.RAW_STAGE",
+            session, p_run_id, procedure, target, source,
             0, 0, 0, "FAILED", str(err),
         )
         raise
 $$
-'''
+'''.replace("__UTIL_STAGE__", UTIL_STAGE_FQN)
 
-SILVER_PROC = f'''
-CREATE OR REPLACE PROCEDURE AIRLINE_DWH.SILVER.SP_RAW_TO_SILVER()
+# Silver: the bronze stream is consumed inside one explicit transaction, together
+# with the reject insert and the MERGE. A failure rolls all of it back, so the
+# stream still holds the same rows and a retry processes them again.
+#
+# Two notes on the Snowflake rules this relies on:
+#  - DDL statements (CREATE, DROP) commit any open transaction, so the batch
+#    table is created before BEGIN TRANSACTION and dropped after COMMIT.
+#  - Only DML and queries belong inside the transaction.
+SILVER_PROC = '''
+CREATE OR REPLACE PROCEDURE AIRLINE_DWH.SILVER.SP_RAW_TO_SILVER(P_RUN_ID STRING)
 RETURNS STRING
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
-IMPORTS = ('@{UTIL_STAGE_FQN}/audit_utils.py')
+IMPORTS = ('@__UTIL_STAGE__/audit_utils.py')
 HANDLER = 'main'
 AS
 $$
 from audit_utils import log_audit, run_merge_and_log
 
-def main(session):
-    sql = """
+RAW_COLUMNS = (
+    "PASSENGER_ID, FIRST_NAME, LAST_NAME, GENDER, AGE, NATIONALITY, "
+    "AIRPORT_NAME, AIRPORT_COUNTRY_CODE, COUNTRY_NAME, AIRPORT_CONTINENT, CONTINENTS, "
+    "DEPARTURE_DATE, ARRIVAL_AIRPORT, PILOT_NAME, FLIGHT_STATUS, TICKET_TYPE, "
+    "PASSENGER_STATUS, SOURCE_FILE_NAME, LOADED_AT, INGESTION_RUN_ID"
+)
+
+BATCH = "AIRLINE_DWH.SILVER.TMP_BRONZE_BATCH"
+SOURCE = "AIRLINE_DWH.BRONZE.RAW_FLIGHTS_STREAM"
+TARGET = "AIRLINE_DWH.SILVER.STG_FLIGHTS"
+PROCEDURE = "AIRLINE_DWH.SILVER.SP_RAW_TO_SILVER"
+
+MERGE_SQL = """
       MERGE INTO AIRLINE_DWH.SILVER.STG_FLIGHTS T
       USING (
         SELECT
@@ -437,6 +475,7 @@ def main(session):
           GENDER,
           AGE,
           CASE
+            WHEN AGE IS NULL THEN 'Unknown'
             WHEN AGE < 18 THEN 'Under 18'
             WHEN AGE < 30 THEN '18-29'
             WHEN AGE < 45 THEN '30-44'
@@ -458,7 +497,10 @@ def main(session):
           SOURCE_FILE_NAME,
           LOADED_AT,
           CURRENT_TIMESTAMP() AS TRANSFORMED_AT
-        FROM AIRLINE_DWH.BRONZE.RAW_FLIGHTS_STREAM
+        FROM AIRLINE_DWH.SILVER.TMP_BRONZE_BATCH
+        WHERE PASSENGER_ID IS NOT NULL
+          AND ARRIVAL_AIRPORT IS NOT NULL
+          AND TRY_TO_DATE(DEPARTURE_DATE, 'MM/DD/YYYY') IS NOT NULL
         -- Keeps exactly one row per natural key even if the batch contains
         -- more than one row for it, so the MERGE below can't fail with
         -- "duplicate row detected during DML action".
@@ -501,34 +543,77 @@ def main(session):
         S.DEPARTURE_DATE, S.ARRIVAL_AIRPORT, S.PILOT_NAME, S.FLIGHT_STATUS, S.TICKET_TYPE,
         S.PASSENGER_STATUS, S.SOURCE_FILE_NAME, S.LOADED_AT, S.TRANSFORMED_AT
       )
-    """
+    
+"""
 
+
+def rollback_quietly(session):
     try:
+        session.sql("ROLLBACK").collect()
+    except Exception:
+        pass
+
+
+def main(session, p_run_id):
+    try:
+        # DDL, outside the transaction (it would commit an open transaction).
+        session.sql(
+            f"CREATE OR REPLACE TRANSIENT TABLE {BATCH} LIKE AIRLINE_DWH.BRONZE.RAW_FLIGHTS"
+        ).collect()
+
+        session.sql("BEGIN TRANSACTION").collect()
+
+        # DML: this is what consumes the bronze stream. A rollback restores it.
+        session.sql(
+            f"INSERT INTO {BATCH} ({RAW_COLUMNS}) SELECT {RAW_COLUMNS} FROM {SOURCE}"
+        ).collect()
+
+        # Rows that cannot be loaded are kept with a reason, not dropped silently.
+        session.sql(
+            f"""
+            INSERT INTO AIRLINE_DWH.SILVER.REJECTED_FLIGHTS
+              (RUN_ID, REJECT_REASON, SOURCE_FILE_NAME, PASSENGER_ID, ARRIVAL_AIRPORT, DEPARTURE_DATE_RAW)
+            SELECT
+              ?,
+              CASE
+                WHEN PASSENGER_ID IS NULL THEN 'PASSENGER_ID is NULL'
+                WHEN ARRIVAL_AIRPORT IS NULL THEN 'ARRIVAL_AIRPORT is NULL'
+                ELSE 'DEPARTURE_DATE is not a valid MM/DD/YYYY date'
+              END,
+              SOURCE_FILE_NAME, PASSENGER_ID, ARRIVAL_AIRPORT, DEPARTURE_DATE
+            FROM {BATCH}
+            WHERE PASSENGER_ID IS NULL
+               OR ARRIVAL_AIRPORT IS NULL
+               OR TRY_TO_DATE(DEPARTURE_DATE, 'MM/DD/YYYY') IS NULL
+            """,
+            params=[p_run_id],
+        ).collect()
+
         affected = run_merge_and_log(
-            session, sql,
-            "AIRLINE_DWH.SILVER.SP_RAW_TO_SILVER",
-            "AIRLINE_DWH.SILVER.STG_FLIGHTS",
-            "AIRLINE_DWH.BRONZE.RAW_FLIGHTS_STREAM",
-            "Merged the bronze stream into the silver layer.",
+            session, p_run_id, MERGE_SQL, PROCEDURE, TARGET, SOURCE,
+            "Merged the bronze batch into the silver layer.",
         )
-        return f"Merged bronze to silver: {{affected}} rows affected"
+
+        session.sql("COMMIT").collect()
+        session.sql(f"DROP TABLE IF EXISTS {BATCH}").collect()
+        return f"Merged bronze to silver: {affected} rows affected"
     except Exception as err:
-        log_audit(
-            session, "AIRLINE_DWH.SILVER.SP_RAW_TO_SILVER",
-            "AIRLINE_DWH.SILVER.STG_FLIGHTS", "AIRLINE_DWH.BRONZE.RAW_FLIGHTS_STREAM",
-            0, 0, 0, "FAILED", str(err),
-        )
+        rollback_quietly(session)
+        log_audit(session, p_run_id, PROCEDURE, TARGET, SOURCE, 0, 0, 0, "FAILED", str(err))
         raise
 $$
-'''
+'''.replace("__UTIL_STAGE__", UTIL_STAGE_FQN)
 
-GOLD_PROC = f'''
-CREATE OR REPLACE PROCEDURE AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD()
+# Gold: same pattern as Silver. The silver stream is consumed inside one
+# explicit transaction together with all five MERGEs.
+
+GOLD_PROC = '''
+CREATE OR REPLACE PROCEDURE AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD(P_RUN_ID STRING)
 RETURNS STRING
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
-IMPORTS = ('@{UTIL_STAGE_FQN}/audit_utils.py')
+IMPORTS = ('@__UTIL_STAGE__/audit_utils.py')
 HANDLER = 'main'
 AS
 $$
@@ -635,49 +720,73 @@ FACT_SQL = """
   )
 """
 
+STG_COLUMNS = (
+    "PASSENGER_ID, FIRST_NAME, LAST_NAME, GENDER, AGE, AGE_GROUP, NATIONALITY, "
+    "AIRPORT_NAME, AIRPORT_COUNTRY_CODE, COUNTRY_NAME, AIRPORT_CONTINENT, CONTINENTS, "
+    "DEPARTURE_DATE, ARRIVAL_AIRPORT, PILOT_NAME, FLIGHT_STATUS, TICKET_TYPE, "
+    "PASSENGER_STATUS, SOURCE_FILE_NAME, LOADED_AT, TRANSFORMED_AT"
+)
 
-def main(session):
+BATCH = "AIRLINE_DWH.GOLD.TMP_SILVER_BATCH"
+SOURCE = "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM"
+PROCEDURE = "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD"
+
+
+def rollback_quietly(session):
     try:
-        # A TRANSIENT table, not TEMP: named temporary objects are not
-        # supported inside an EXECUTE AS OWNER stored procedure (the default
-        # for Python procedures) and fail with "Unsupported statement type
-        # 'temporary TABLE'". CTAS still consumes the silver stream, and
-        # the five MERGEs below read this snapshot instead of the stream
-        # (a stream can only be consumed once per transaction).
+        session.sql("ROLLBACK").collect()
+    except Exception:
+        pass
+
+
+def main(session, p_run_id):
+    try:
+        # DDL, outside the transaction (it would commit an open transaction).
         session.sql(
-            "CREATE OR REPLACE TRANSIENT TABLE AIRLINE_DWH.GOLD.TMP_SILVER_BATCH AS "
-            "SELECT * FROM AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM"
+            f"CREATE OR REPLACE TRANSIENT TABLE {BATCH} LIKE AIRLINE_DWH.SILVER.STG_FLIGHTS"
+        ).collect()
+
+        session.sql("BEGIN TRANSACTION").collect()
+
+        # DML: this is what consumes the silver stream. A rollback restores it.
+        session.sql(
+            f"INSERT INTO {BATCH} ({STG_COLUMNS}) SELECT {STG_COLUMNS} FROM {SOURCE}"
         ).collect()
 
         total = 0
-        total += run_merge_and_log(session, DIM_PASSENGER_SQL, "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD",
-                                    "AIRLINE_DWH.GOLD.DIM_PASSENGER", "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM",
-                                    "Upserted passenger dimension rows.")
-        total += run_merge_and_log(session, DIM_AIRPORT_SQL, "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD",
-                                    "AIRLINE_DWH.GOLD.DIM_AIRPORT", "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM",
-                                    "Upserted airport dimension rows.")
-        total += run_merge_and_log(session, DIM_PILOT_SQL, "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD",
-                                    "AIRLINE_DWH.GOLD.DIM_PILOT", "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM",
-                                    "Upserted pilot dimension rows.")
-        total += run_merge_and_log(session, DIM_DATE_SQL, "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD",
-                                    "AIRLINE_DWH.GOLD.DIM_DATE", "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM",
-                                    "Upserted date dimension rows.")
-        total += run_merge_and_log(session, FACT_SQL, "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD",
-                                    "AIRLINE_DWH.GOLD.FACT_FLIGHTS", "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM",
-                                    "Built the fact table from dimension keys.")
+        total += run_merge_and_log(session, p_run_id, DIM_PASSENGER_SQL, PROCEDURE,
+                                   "AIRLINE_DWH.GOLD.DIM_PASSENGER", SOURCE,
+                                   "Upserted passenger dimension rows.")
+        total += run_merge_and_log(session, p_run_id, DIM_AIRPORT_SQL, PROCEDURE,
+                                   "AIRLINE_DWH.GOLD.DIM_AIRPORT", SOURCE,
+                                   "Upserted airport dimension rows.")
+        total += run_merge_and_log(session, p_run_id, DIM_PILOT_SQL, PROCEDURE,
+                                   "AIRLINE_DWH.GOLD.DIM_PILOT", SOURCE,
+                                   "Upserted pilot dimension rows.")
+        total += run_merge_and_log(session, p_run_id, DIM_DATE_SQL, PROCEDURE,
+                                   "AIRLINE_DWH.GOLD.DIM_DATE", SOURCE,
+                                   "Upserted date dimension rows.")
+        total += run_merge_and_log(session, p_run_id, FACT_SQL, PROCEDURE,
+                                   "AIRLINE_DWH.GOLD.FACT_FLIGHTS", SOURCE,
+                                   "Built the fact table from dimension keys.")
 
-        # Only dropped on success: after a failure the snapshot is left in
-        # place (the stream was already consumed by the CTAS above) so the
-        # rows can still be inspected.
-        session.sql("DROP TABLE IF EXISTS AIRLINE_DWH.GOLD.TMP_SILVER_BATCH").collect()
-
-        return f"Merged silver into gold with {{total}} affected rows across dimensions and fact."
+        session.sql("COMMIT").collect()
+        session.sql(f"DROP TABLE IF EXISTS {BATCH}").collect()
+        return f"Merged silver into gold with {total} affected rows across dimensions and fact."
     except Exception as err:
-        log_audit(
-            session, "AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD",
-            "AIRLINE_DWH.GOLD.FACT_FLIGHTS", "AIRLINE_DWH.SILVER.STG_FLIGHTS_STREAM",
-            0, 0, 0, "FAILED", str(err),
-        )
+        # The batch table is left in place after a failure, for inspection.
+        rollback_quietly(session)
+        log_audit(session, p_run_id, PROCEDURE, "AIRLINE_DWH.GOLD.FACT_FLIGHTS", SOURCE,
+                  0, 0, 0, "FAILED", str(err))
         raise
 $$
-'''
+'''.replace("__UTIL_STAGE__", UTIL_STAGE_FQN)
+
+# Earlier versions created these procedures with other argument lists. A new
+# argument list creates an overload next to the old procedure instead of
+# replacing it, so the old overloads are dropped before the new ones are created.
+OBSOLETE_PROCEDURE_STATEMENTS = [
+    "DROP PROCEDURE IF EXISTS AIRLINE_DWH.BRONZE.SP_LOAD_RAW_FROM_STAGE(STRING)",
+    "DROP PROCEDURE IF EXISTS AIRLINE_DWH.SILVER.SP_RAW_TO_SILVER()",
+    "DROP PROCEDURE IF EXISTS AIRLINE_DWH.GOLD.SP_SILVER_TO_GOLD()",
+]

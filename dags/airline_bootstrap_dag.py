@@ -1,11 +1,14 @@
 import pendulum
 from airflow.decorators import dag, task
+from airflow.models.param import Param
+from airflow.operators.python import get_current_context
 
 from snowflake_sql import (
     INFRA_STATEMENTS,
     TABLE_STATEMENTS,
     STREAM_STATEMENTS,
     SECURITY_STATEMENTS,
+    OBSOLETE_PROCEDURE_STATEMENTS,
     BRONZE_LOAD_PROC,
     SILVER_PROC,
     GOLD_PROC,
@@ -14,6 +17,7 @@ from snowflake_sql import (
 )
 
 UTIL_MODULE_LOCAL_PATH = "/opt/airflow/snowflake/python_procs/audit_utils.py"
+DATABASE_NAME = "AIRLINE_DWH"
 
 
 def _detach_row_access_policy_everywhere(session, policy_fqn: str) -> None:
@@ -48,6 +52,12 @@ def _detach_row_access_policy_everywhere(session, policy_fqn: str) -> None:
         session.sql(f"ALTER {object_kind} IF EXISTS {fq_entity} DROP ALL ROW ACCESS POLICIES").collect()
 
 
+def _database_exists(session, name: str) -> bool:
+    """True only for an exact name match: SHOW ... LIKE treats '_' as a wildcard."""
+    rows = session.sql(f"SHOW DATABASES LIKE '{name}'").collect()
+    return any(row["name"].upper() == name for row in rows)
+
+
 @dag(
     dag_id="snowflake_bootstrap",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
@@ -55,10 +65,25 @@ def _detach_row_access_policy_everywhere(session, policy_fqn: str) -> None:
     catchup=False,
     tags=["snowflake", "bootstrap"],
     doc_md="Creates all Snowflake objects used by the demo.",
+    params={
+        "confirm_reset": Param(
+            False,
+            type="boolean",
+            description="Rebuild the database even though it already exists. All data is deleted.",
+        ),
+    },
 )
 def snowflake_bootstrap():
     @task.snowpark
     def create_infrastructure(session) -> str:
+        confirm_reset = bool(get_current_context()["params"].get("confirm_reset", False))
+        if _database_exists(session, DATABASE_NAME) and not confirm_reset:
+            raise ValueError(
+                "Bootstrap has already run: database AIRLINE_DWH exists. "
+                "Re-run with confirm_reset=true to rebuild it. "
+                "All existing data will be deleted."
+            )
+
         for statement in INFRA_STATEMENTS:
             session.sql(statement).collect()
         return "Warehouse, database, schemas, file format, stage and sequences ready."
@@ -90,10 +115,17 @@ def snowflake_bootstrap():
         _detach_row_access_policy_everywhere(session, ROW_ACCESS_POLICY_FQN)
         for statement in SECURITY_STATEMENTS:
             session.sql(statement).collect()
-        return "Row access policy, secure view and grants ready."
+
+        # Grant the Power BI role to the user this bootstrap runs as.
+        # Verified manually: GRANT ROLE ... TO USER IDENTIFIER($me) after SET me.
+        session.sql("SET me = (SELECT CURRENT_USER())").collect()
+        session.sql("GRANT ROLE AIRLINE_BI TO USER IDENTIFIER($me)").collect()
+        return "Row access policy, secure view, roles and grants ready."
 
     @task.snowpark
     def create_procedures(session) -> str:
+        for statement in OBSOLETE_PROCEDURE_STATEMENTS:
+            session.sql(statement).collect()
         session.sql(BRONZE_LOAD_PROC).collect()
         session.sql(SILVER_PROC).collect()
         session.sql(GOLD_PROC).collect()

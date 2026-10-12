@@ -9,9 +9,13 @@ own copy.
 """
 
 
-def log_audit(session, procedure_name, target_object, source_object,
+def log_audit(session, run_id, procedure_name, target_object, source_object,
               inserted, updated, deleted, status, details):
-    """Insert one row into AIRLINE_DWH.AUDIT.ETL_AUDIT_LOG. Returns the affected-row total."""
+    """Insert one row into AIRLINE_DWH.AUDIT.ETL_AUDIT_LOG. Returns the affected-row total.
+
+    run_id is the Airflow run id passed in by the caller, so every audit row
+    written during one pipeline run carries the same value.
+    """
     affected = inserted + updated + deleted
     session.sql(
         """
@@ -19,10 +23,10 @@ def log_audit(session, procedure_name, target_object, source_object,
           (RUN_ID, PROCEDURE_NAME, TARGET_OBJECT, SOURCE_OBJECT,
            ROWS_INSERTED, ROWS_UPDATED, ROWS_DELETED, ROWS_AFFECTED,
            STATUS, DETAILS)
-        SELECT UUID_STRING(), ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         """,
         params=[
-            procedure_name, target_object, source_object,
+            run_id, procedure_name, target_object, source_object,
             inserted, updated, deleted, affected, status, details,
         ],
     ).collect()
@@ -51,11 +55,12 @@ def parse_dml_counts(rows):
     }
 
 
-def run_merge_and_log(session, sql_text, procedure_name, target_object, source_object, details):
+def run_merge_and_log(session, run_id, sql_text, procedure_name, target_object,
+                      source_object, details):
     """Run a MERGE, read its row counts from the result, and log them."""
     counts = parse_dml_counts(session.sql(sql_text).collect())
     log_audit(
-        session, procedure_name, target_object, source_object,
+        session, run_id, procedure_name, target_object, source_object,
         counts["inserted"], counts["updated"], counts["deleted"],
         "SUCCESS", details,
     )
