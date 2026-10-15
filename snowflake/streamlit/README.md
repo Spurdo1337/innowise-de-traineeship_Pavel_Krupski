@@ -1,79 +1,58 @@
-# Snowflake DB Clone Tool
+# DB Clone Tool
 
-A small Streamlit app that clones a Snowflake database and assigns separate development and read-only permissions. It shows the SQL plan and explains each grant before execution.
+A Streamlit in Snowflake app using the **container runtime**. It clones a standard database visible to the app's execution role, assigns ownership of the cloned database, schemas, tables and ordinary views to a selected owner role, and grants a selected read-only role access to the schemas chosen in the form.
 
-## How it works
+The default roles are `DEVELOPMENT` and `READ_ONLY_ROLE`. The app does not create roles or assign them to users; the selected roles must already exist and be visible to the app.
 
-- Creates a zero-copy clone of the selected source database and adds a comment marker in the same `CREATE DATABASE ... CLONE` statement.
-- Transfers ownership of existing schemas, tables, views, and the database to `DEVELOPMENT`.
-- Grants `READ_ONLY_ROLE` `USAGE` on the database and existing schemas, plus `SELECT` on existing tables and views.
-- Adds future grants so schemas, tables, and views created later receive the corresponding read access.
-- If the target already exists, the app only allows recreation when the database has the app's comment marker, its owner is `DEVELOPMENT` or `DB_CLONER_ROLE`, and the user confirms by ticking the checkbox and typing the exact database name.
+## Security and limitations
 
-Recreating a target drops the existing clone first. Any changes made to that clone after creation will be lost.
+- **The app runs with `DB_CLONER_ROLE` privileges.** This role has account-level `CREATE DATABASE` and `MANAGE GRANTS` privileges, so only trusted users should be allowed to use the app. Do not grant this execution role to every app viewer.
+- **The source selector is not an allowlist.** The current code lists all standard databases visible to the app, excluding imported databases and databases with an origin. The source grants in `setup.sql` provide privileges needed for cloning; they do not restrict which databases appear in the selector. The code currently has no explicit source allowlist.
+- The selected read-only role receives `USAGE` on the clone and selected schemas, plus `SELECT` on existing and future tables and ordinary views in those schemas. The app does not remove any other privileges that role may already have through direct grants or role inheritance. Use a dedicated role without unrelated write privileges when read-only access is required.
+- The app transfers ownership of the cloned database, schemas, tables and ordinary views. It does not transfer ownership of every Snowflake object type. Cloning other object types depends on Snowflake's clone rules and the privileges granted to the app role.
+- **Temporary-name warning:** the app uses `<TARGET_NAME>_NEW` as its temporary database. If that database exists and its comment starts with `Created by Snowflake DB Clone Tool`, the app may drop it before cloning. The marker does not prove that the database belongs to the current operation. Do not use a target/source combination that could put a database you need under this temporary name.
+- An existing target is replaced only if its comment has the app's marker and its owner matches the selected owner role. The app asks for a checkbox confirmation and the exact target name. After a successful swap, the previous target is deleted; its changes are lost. Databases not marked as created by this tool are not replaced.
+- After cloning, `verify()` performs a **basic access check**: it checks that the target exists, that its reported owner matches the selected owner, and that the read-only role has `USAGE` on the database and selected schemas. It is a smoke check, not a complete grant audit; it does not verify every `SELECT` grant, future grant, inherited privilege or cloned object.
 
-## Requirements
+## Deployment
 
-This project is designed for **Streamlit in Snowflake Workspaces using Container Runtime**. It is not intended to be run locally with `streamlit run`.
+### 1. Configure and run `setup.sql` once
 
-The current account configuration uses:
+1. Review the example settings near the top of `setup.sql` and make them match your Snowflake environment:
+   - `QUERY_WAREHOUSE_NAME` — the query warehouse configured for the Streamlit app. `AIRLINE_DWH_WH` is a demonstration value, not a requirement and not a source-database restriction.
+   - `STREAMLIT_COMPUTE_POOL_NAME` — the compute pool configured for the container runtime. The example is `SYSTEM_COMPUTE_POOL_CPU`.
+   - `SOURCE_DATABASE_NAME` in section E — the example source database, `AIRLINE_DWH`. Change it to a database that exists in your account, or comment out section E and configure source privileges separately.
+2. Run the script in a Snowsight SQL worksheet as `ACCOUNTADMIN`. It creates the roles, grants the app's required privileges, creates `ADMIN_TOOLS.CLONE_TOOL`, and grants the example source privileges.
+3. If the app needs to clone another source database, repeat the grants in section E with that database's name. **These grants do not form a security allowlist:** the app currently displays every standard database visible to its execution role. Because `DB_CLONER_ROLE` has account-level `MANAGE GRANTS`, treat it as a highly privileged role.
+4. Grant `DB_CLONER_ROLE` to the person who deploys and manages the app, if they do not already have it. Replace the placeholder before running:
 
-| Setting | Value |
-|---|---|
-| App execution role | `DB_CLONER_ROLE` |
-| Development owner role | `DEVELOPMENT` |
-| Read-only role | `READ_ONLY_ROLE` |
-| Source database | `AIRLINE_DWH` |
-| App database/schema | `ADMIN_TOOLS.CLONE_TOOL` |
-| Compute pool | `SYSTEM_COMPUTE_POOL_CPU` |
-| Query warehouse | `AIRLINE_DWH_WH` |
+   ```sql
+   GRANT ROLE DB_CLONER_ROLE TO USER <DEPLOYER_USER>;
+   ```
 
-The roles must already exist. `DB_CLONER_ROLE` must inherit `DEVELOPMENT`, have `CREATE DATABASE` and `MANAGE GRANTS` on the account, have access to the source database and its objects, and have `USAGE` on the configured warehouse and compute pool. It must own, or otherwise have the required privileges on, the app's database and schema. These are powerful privileges: restrict app access to trusted users only.
+   Do not grant `DB_CLONER_ROLE` to every app viewer.
 
-## Install and run
+`setup.sql` is a demonstration bootstrap, not a production security policy. Review the role privileges and role inheritance before using it outside a controlled training environment.
 
-1. In Snowsight, switch to `DB_CLONER_ROLE`.
-2. Open **Workspaces** and create or open the workspace for this app.
-3. Select **+ Add new → Streamlit app**. Keep the generated `pyproject.toml`, `snowflake.yml`, and `.streamlit/config.toml` files.
-4. Replace the contents of `streamlit_app.py` with this project's code and save it.
-5. Configure the workspace to use compute pool `SYSTEM_COMPUTE_POOL_CPU` and query warehouse `AIRLINE_DWH_WH` if prompted.
-6. Click **Run**. The app should start, and Snowsight should show that it is running as `DB_CLONER_ROLE`.
-7. Enter a target database name containing the Snowflake username token `SPURDO6769`, for example `AIRLINE_DWH_CLONE_SPURDO6769_3`. Check that the name does not already belong to a database you need to keep.
-8. Set the source to `AIRLINE_DWH`, owner role to `DEVELOPMENT`, and read-only role to `READ_ONLY_ROLE`. Review the generated SQL before clicking **Clone database**.
-9. If the target already exists, proceed only if it is a managed clone you intend to replace. Confirm the checkbox and type the exact target database name.
+### 2. Create and deploy the Streamlit app
 
-**Run vs. Deploy:** **Run** starts a private development preview in the workspace. To publish a Snowflake Streamlit object, click **Deploy**, choose `ADMIN_TOOLS.CLONE_TOOL` as the target location, select the compute pool and query warehouse above, and share it only with trusted roles. After editing code, run it for a preview and deploy again to publish the changes.
+1. In Snowsight, open **Workspaces** and choose **+ Add new → Streamlit app**.
+2. Create the app in database `ADMIN_TOOLS` and schema `CLONE_TOOL`.
+3. Replace the generated `streamlit_app.py` with this repository's `streamlit_app.py`.
+4. Keep the generated `pyproject.toml` if it already includes `streamlit[snowflake]`.
+5. Set the app's settings to match `setup.sql`:
 
-## Verification
+   | Setting | Demonstration value |
+   |---|---|
+   | App name | `DB_CLONE_TOOL` |
+   | Database | `ADMIN_TOOLS` |
+   | Schema | `CLONE_TOOL` |
+   | Runtime | Container |
+   | Runtime name | `SYSTEM$ST_CONTAINER_RUNTIME_PY3_11` |
+   | Compute pool | `SYSTEM_COMPUTE_POOL_CPU` |
+   | Query warehouse | `AIRLINE_DWH_WH` |
+   | App execution/owner role | `DB_CLONER_ROLE` |
 
-Replace `<TARGET_DB>` with the clone name you created:
+   If you changed the warehouse or compute pool in `setup.sql`, use the same values in the app settings. `AIRLINE_DWH_WH` is only an example query warehouse; it is not hardcoded as the source database in the app.
 
-```sql
-SHOW DATABASES LIKE '<TARGET_DB>';
-SHOW GRANTS ON DATABASE <TARGET_DB>;
-SHOW FUTURE GRANTS IN DATABASE <TARGET_DB>;
-SHOW GRANTS ON TABLE <TARGET_DB>.GOLD.DIM_DATE;
-```
-
-Expected at database level: `DEVELOPMENT` has `OWNERSHIP`, and `READ_ONLY_ROLE` has `USAGE`. Table grants should show `OWNERSHIP` for `DEVELOPMENT` and `SELECT` for `READ_ONLY_ROLE`. Future grants should include `USAGE` on future schemas and `SELECT` on future tables and views.
-
-Test read-only access with secondary roles disabled:
-
-```sql
-USE ROLE READ_ONLY_ROLE;
-USE SECONDARY ROLES NONE;
-USE WAREHOUSE AIRLINE_DWH_WH;
-
-SELECT COUNT(*)
-FROM <TARGET_DB>.GOLD.DIM_DATE;
-
--- This should fail with insufficient privileges and should not modify data:
-DELETE FROM <TARGET_DB>.GOLD.DIM_DATE WHERE 1 = 0;
-```
-
-## Notes and limitations
-
-- Snowflake DDL statements are not run as one transaction. If a step fails, inspect the target database before retrying; the app stops at the failed step.
-- Ownership transfer is implemented for schemas, tables, views, and the database. Other object types (for example procedures, tasks, stages, streams, and policies) are not comprehensively handled by this minimal version.
-- Existing row access policies from the source can still filter query results in the clone. For example, `FACT_FLIGHTS` may return zero rows for `READ_ONLY_ROLE` if the role is not allowed by the source project's row access policy. This does not necessarily mean the `SELECT` grant is missing.
-- The app owner role has powerful account-level privileges. Anyone allowed to use the app may be able to invoke operations using those owner privileges, so keep sharing restricted.
+6. Deploy the app and open it. Confirm that it loads without `ModuleNotFoundError` and that the expected source databases appear in **Clone from DB**.

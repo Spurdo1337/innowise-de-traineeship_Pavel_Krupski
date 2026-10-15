@@ -140,3 +140,12 @@ SELECT FACT_FLIGHT_SK, PASSENGER_STATUS
 FROM AIRLINE_DWH.GOLD.FACT_FLIGHTS
 WHERE FACT_FLIGHT_SK BETWEEN 1 AND 15
 ORDER BY FACT_FLIGHT_SK;
+
+-- ============================================================
+-- Cleanup: remove the copies this demo creates in ANALYTICS.
+-- The copies are full table copies and are not protected by row access policy.
+-- ============================================================
+DROP TABLE IF EXISTS AIRLINE_DWH.ANALYTICS.FACT_FLIGHTS_CLONE;
+DROP TABLE IF EXISTS AIRLINE_DWH.ANALYTICS.FACT_FLIGHTS_RECOVERY;
+DROP TABLE IF EXISTS AIRLINE_DWH.ANALYTICS.SCRATCH_MARKER;
+DROP SCHEMA IF EXISTS AIRLINE_DWH.ANALYTICS_BACKUP;
