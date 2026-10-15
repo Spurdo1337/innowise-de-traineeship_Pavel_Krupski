@@ -1,0 +1,16 @@
+# Never commit the real .env (only .env.example is tracked)
+.env
+
+# Airflow runtime output
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
