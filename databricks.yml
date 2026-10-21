@@ -1,0 +1,26 @@
+# Declarative Automation Bundle (DAB) for the medallion pipeline.
+# Deploy with scripts/deploy.ps1 from the project root (it binds existing objects, deploys, uploads source files).
+# No workspace paths, user names or IDs are stored here: DAB derives them at deploy time.
+
+bundle:
+  name: medallion
+
+include:
+  - resources/*.yml
+
+sync:
+  exclude:
+    - datasets/**
+    - README.md
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for all objects
+    default: workspace
+  volume_path:
+    description: Volume folder that holds the source files (tripdata.parquet, users.avro)
+    default: /Volumes/workspace/raw_files/landing
+
+targets:
+  dev:
+    default: true
