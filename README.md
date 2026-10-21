@@ -101,6 +101,7 @@ To run the notebooks manually instead of the job, use this order: `00` -> `01` -
 ## 6. Assumptions and limitations
 
 **Data**
+
 1. `users.avro` is the standard Apache Avro sample: **2 rows** (`name`, `favorite_color`, `favorite_numbers`). It has no registration date, so `gold.user_metrics` contains only 1-2 rows.
 2. `tripdata.parquet` has no driver or trip id. Pickup and dropoff are `TIMESTAMP_NTZ`; bronze keeps them as-is. Bronze, silver and `gold.enriched_trips` set `delta.feature.timestampNtz = supported` in their table properties, because DLT cannot enable this table feature on an existing table.
 3. **Faker generates everything missing from the files**: the driver id (a UUID per driver index), the driver profile (name, car number, phone) and `registration_date` (deterministic per name, 2020-01-01 .. 2024-01-31). The DLT version derives `registration_date` from a hash of the name instead, to keep pipeline dependencies minimal.
@@ -108,24 +109,32 @@ To run the notebooks manually instead of the job, use this order: `00` -> `01` -
 5. **Synthetic `driver_id` for trips**: each trip gets an id from `silver.drivers`, chosen by hashing the whole trip row. The choice is deterministic and every trip matches a profile; the join is still a `LEFT JOIN` as required.
 
 **Schema and naming**
+
 6. The stream schema has an extra `driver_id` column (needed for deduplication and the join). `phone` is added later by schema evolution.
 7. Names differ from the task: the payment description column is `payment_description`, the count column in `user_metrics` is `users_count`, and the DLT pipeline writes to `dlt_bronze`, `dlt_silver`, `dlt_gold`, because pipeline-owned tables cannot be written by notebooks.
 
 **Logic**
+
 8. Duplicates are removed before `ingest_time` is added (otherwise no two rows would be equal). Silver drivers are filtered first (experience > 0, rating 1.0-5.0), then the latest record per `driver_id` by `timestamp` is kept.
 9. Silver and gold notebook tables are fully overwritten on every run. Silver taxi deduplication compares whole rows, because the data has no natural key.
 10. `OPTIMIZE ... ZORDER BY (experience)` runs on `gold.driver_metrics` as required, although the table is tiny. Liquid Clustering is used on `gold.taxi_metrics` instead, because Z-Order and Liquid Clustering cannot be combined on one table. The DLT version sets Z-Order with the table property `pipelines.autoOptimize.zOrderCols` and Liquid Clustering with `cluster_by`.
 
 **Streaming**
+
 11. The driver stream is **not continuous**. Serverless compute supports only `Trigger.AvailableNow`. Faker writes driver events as JSON files (3 files without `phone`, 3 with it, 2,000 events each). The stream reads them with `maxFilesPerTrigger = 1`, so each file is one micro-batch, and stops by itself. The checkpoint in the Volume remembers processed files. Phase 2 files are written only after phase 1 has finished, otherwise phase 1 would read them too.
 12. Schema evolution: phase 1 reads the schema without `phone`, phase 2 reads the schema with `phone` from the same checkpoint and writes with `mergeSchema = true`. The schema is passed explicitly in each phase. Before phase 2, notebook 02 saves the table version without `phone` to `_state/drivers_pre_evolution_version.json`, which `VERSION AS OF` and `RESTORE` use. Phase 1 always starts from scratch (drops the table, the checkpoint, the saved version and old driver files), so the job can be repeated.
 
 **DLT**
+
 13. The pipeline uses the classic `import dlt` / `@dlt.table` API, as the task says; the newer `pyspark.pipelines` API is mentioned in a code comment. The bundle sets the pipeline `libraries` to `pipelines/dlt_medallion.py`.
 14. DLT bronze drivers come from JSON files written by notebook 04, so they differ from the `bronze.drivers` stream. Every run of notebook 04 appends 6,000 events (24,000 after four runs); silver removes the duplicates.
 15. `silver.taxi` (`ingest_time = current_timestamp()`, full-row deduplication) and `silver.users` are materialized views that are recomputed in full. During verification `dlt_gold.driver_metrics` and `dlt_gold.user_metrics` were empty after an incremental update and correct after a Full refresh of the pipeline; the cause was not confirmed. After changes to pipeline code, check the row counts and run Full refresh if they are empty.
 
 **Operations**
+
 16. The job uses no cluster. Its tasks use the `default` environment (client 1, `faker`), as in the successful run. The notebooks also run `%pip install faker`, so each notebook task installs it in its own session (six notebook task runs per job run).
-17. Deployment uses Databricks Asset Bundles. `deploy.bat` binds the existing schemas, the Volume, the pipeline and the job (found by their project names) to the bundle before the deploy, so repeated runs and runs in a new workspace update the objects instead of failing with "already exists". Each bind asks for confirmation. The pipeline id is passed to the job by reference, so the repository holds no IDs.
+17. Deployment uses Databricks Asset Bundles. `deploy.bat` binds the existing schemas, the Volume, the pipeline and the job
+    (found by their project names) to the bundle before the deploy, so repeated runs and runs in a new workspace update
+    the objects instead of failing with "already exists". Each bind asks for confirmation. The pipeline id is passed to
+    the job by reference, so the repository holds no IDs.
 18. Governance (user, group, grants) is done manually in the UI. Unity Catalog has no `READ` privilege on a schema; the equivalent is `USE CATALOG` + `USE SCHEMA` + `SELECT`.
