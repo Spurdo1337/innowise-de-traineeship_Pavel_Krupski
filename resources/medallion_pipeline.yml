@@ -1,0 +1,14 @@
+# Lakeflow Spark Declarative Pipeline (DLT) on serverless compute.
+resources:
+  pipelines:
+    medallion_dlt:
+      name: medallion_dlt
+      serverless: true
+      catalog: ${var.catalog}
+      target: ${resources.schemas.dlt_gold.name}   # default schema; the code uses fully qualified names
+      libraries:
+        - notebook:
+            path: ../pipelines/dlt_medallion.py
+      configuration:
+        medallion.catalog: ${var.catalog}
+        medallion.volume_path: ${var.volume_path}

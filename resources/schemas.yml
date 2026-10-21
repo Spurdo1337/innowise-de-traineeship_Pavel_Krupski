@@ -1,0 +1,39 @@
+# Unity Catalog schemas and the source Volume. Created by the bundle on the first deploy;
+# existing ones are bound by scripts/deploy.ps1 instead of being created again.
+resources:
+  schemas:
+    raw_files:
+      catalog_name: ${var.catalog}
+      name: raw_files
+      comment: "Source files, checkpoints and reports of the medallion project"
+    bronze:
+      catalog_name: ${var.catalog}
+      name: bronze
+      comment: "Bronze layer: data as ingested"
+    silver:
+      catalog_name: ${var.catalog}
+      name: silver
+      comment: "Silver layer: cleansed data"
+    gold:
+      catalog_name: ${var.catalog}
+      name: gold
+      comment: "Gold layer: business aggregates"
+    dlt_bronze:
+      catalog_name: ${var.catalog}
+      name: dlt_bronze
+      comment: "Bronze tables of the DLT pipeline"
+    dlt_silver:
+      catalog_name: ${var.catalog}
+      name: dlt_silver
+      comment: "Silver tables of the DLT pipeline"
+    dlt_gold:
+      catalog_name: ${var.catalog}
+      name: dlt_gold
+      comment: "Gold tables of the DLT pipeline"
+  volumes:
+    landing:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.raw_files.name}
+      name: landing
+      volume_type: MANAGED
+      comment: "Source files, checkpoints and reports"
