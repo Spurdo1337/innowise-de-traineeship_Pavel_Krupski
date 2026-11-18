@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: stg_actor
+    description: Actor records with explicit types.
+    data_tests:
+      - unique:
+          column_name: actor_id
+      - not_null:
+          column_name: actor_id
+
+  - name: stg_address
+    description: Addresses with city references.
+    data_tests:
+      - unique:
+          column_name: address_id
+      - not_null:
+          column_name: address_id
+
+  - name: stg_category
+    description: Film categories.
+    data_tests:
+      - unique:
+          column_name: category_id
+      - not_null:
+          column_name: category_name
+
+  - name: stg_city
+    description: Cities with country references.
+    data_tests:
+      - unique:
+          column_name: city_id
+      - not_null:
+          column_name: city
+
+  - name: stg_country
+    description: Countries.
+    data_tests:
+      - unique:
+          column_name: country_id
+      - not_null:
+          column_name: country
+
+  - name: stg_customer
+    description: Customers with address and activity flags.
+    data_tests:
+      - unique:
+          column_name: customer_id
+      - not_null:
+          column_name: customer_id
+
+  - name: stg_film
+    description: Films with category-independent attributes.
+    data_tests:
+      - unique:
+          column_name: film_id
+      - not_null:
+          column_name: title
+      - accepted_values:
+          column_name: rating
+          arguments:
+            values: ['G', 'PG', 'PG-13', 'R', 'NC-17']
+
+  - name: stg_film_actor
+    description: Film to actor assignments.
+    data_tests:
+      - not_null:
+          column_name: film_id
+      - not_null:
+          column_name: actor_id
+
+  - name: stg_film_category
+    description: Film to category assignments.
+    data_tests:
+      - unique:
+          column_name: film_id
+      - not_null:
+          column_name: category_id
+
+  - name: stg_inventory
+    description: Inventory items per store.
+    data_tests:
+      - unique:
+          column_name: inventory_id
+      - not_null:
+          column_name: film_id
+
+  - name: stg_language
+    description: Film languages.
+    data_tests:
+      - unique:
+          column_name: language_id
+      - not_null:
+          column_name: language_name
+
+  - name: stg_payment
+    description: Payments; the Airbyte table returns the rows of the payment partitions.
+    data_tests:
+      - unique:
+          column_name: payment_id
+      - not_null:
+          column_name: payment_id
+      - not_null:
+          column_name: amount
+
+  - name: stg_rental
+    description: Rentals with rental and return timestamps.
+    data_tests:
+      - unique:
+          column_name: rental_id
+      - not_null:
+          column_name: rental_id
+      - not_null:
+          column_name: rental_date
+
+  - name: stg_staff
+    description: Staff members.
+    data_tests:
+      - unique:
+          column_name: staff_id
+      - not_null:
+          column_name: staff_id
+
+  - name: stg_store
+    description: Stores.
+    data_tests:
+      - unique:
+          column_name: store_id
+      - not_null:
+          column_name: store_id

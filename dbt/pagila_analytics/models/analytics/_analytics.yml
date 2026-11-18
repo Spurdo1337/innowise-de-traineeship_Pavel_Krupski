@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: film_category_distribution
+    description: Number of films per category.
+    data_tests:
+      - not_null:
+          column_name: category
+
+  - name: top_rented_actors
+    description: Top 10 actors by rentals of their films.
+    data_tests:
+      - not_null:
+          column_name: rental_count
+
+  - name: highest_revenue_category
+    description: Category with the highest total revenue (one row).
+
+  - name: films_not_in_inventory
+    description: Films that never appeared in inventory.
+
+  - name: top_children_actors
+    description: Top 3 actors by "Children" films, ties included.
+
+  - name: customer_distribution_by_city
+    description: Active and inactive customers per city.
+
+  - name: category_rental_hours_analysis
+    description: Category with the most rental hours per city group and city.

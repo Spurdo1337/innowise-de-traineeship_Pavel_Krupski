@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: Calendar dimension (one row per day, 2000-01-01 to 2030-12-31).
+    data_tests:
+      - unique:
+          column_name: date_day
+      - not_null:
+          column_name: date_day
+
+  - name: dim_film
+    description: Film dimension with language and category.
+    data_tests:
+      - unique:
+          column_name: film_id
+      - not_null:
+          column_name: film_id
+
+  - name: dim_actor
+    description: Actor dimension.
+    data_tests:
+      - unique:
+          column_name: actor_id
+      - not_null:
+          column_name: actor_id
+
+  - name: dim_customer
+    description: Customer dimension with location attributes.
+    data_tests:
+      - unique:
+          column_name: customer_id
+      - not_null:
+          column_name: customer_id
+
+  - name: fact_rental
+    description: One row per rental with duration measures.
+    data_tests:
+      - unique:
+          column_name: rental_id
+      - not_null:
+          column_name: rental_id
+      - relationships:
+          column_name: film_id
+          arguments:
+            to: ref('dim_film')
+            field: film_id
+      - relationships:
+          column_name: customer_id
+          arguments:
+            to: ref('dim_customer')
+            field: customer_id
+
+  - name: fact_revenue
+    description: One row per payment with the related film and store.
+    data_tests:
+      - unique:
+          column_name: payment_id
+      - not_null:
+          column_name: payment_id
+      - relationships:
+          column_name: customer_id
+          arguments:
+            to: ref('dim_customer')
+            field: customer_id

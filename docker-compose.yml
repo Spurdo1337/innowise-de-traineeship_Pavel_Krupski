@@ -1,0 +1,192 @@
+# ---------------------------------------------------------------------------
+# Local stack for the SADA project.
+#
+#   metadata-db   Airflow metadata database
+#   pagila-db     Pagila source database (PostgreSQL)
+#   sakila-db     Sakila source database (MySQL)
+#   airflow-*     Airflow 3 components (init, api-server, scheduler, dag-processor)
+#
+# Airbyte is installed separately (see README) and reaches the source
+# databases through the ports published below.
+# ---------------------------------------------------------------------------
+
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+  image: sada-airflow:local
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@metadata-db:5432/airflow
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
+    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "4"
+    AIRFLOW__CORE__MIN_SERIALIZED_DAG_UPDATE_INTERVAL: "0"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+
+    # Source databases (credentials are local demo values).
+    AIRFLOW_CONN_PAGILA_DEFAULT: >-
+      {"conn_type": "postgres", "host": "pagila-db", "schema": "pagila",
+      "login": "postgres", "password": "postgres", "port": 5432}
+    AIRFLOW_CONN_SAKILA_DEFAULT: >-
+      {"conn_type": "mysql", "host": "sakila-db", "schema": "sakila",
+      "login": "root", "password": "root", "port": 3306}
+
+    # Snowflake is used with the development role only; the admin account is
+    # never configured inside Airflow.
+    AIRFLOW_CONN_SNOWFLAKE_DEFAULT: >-
+      {"conn_type": "snowflake", "login": "${AIRFLOW_SF_USER}",
+      "password": "${AIRFLOW_SF_PASSWORD}",
+      "extra": {"account": "${SNOWFLAKE_ACCOUNT}", "database": "${SNOWFLAKE_DATABASE}",
+      "warehouse": "${SNOWFLAKE_WAREHOUSE}", "role": "SADA_DEV"}}
+
+    # Airbyte API. Cloud uses https://api.airbyte.com/v1; a self-managed
+    # instance uses http://host.docker.internal:8000/api/public/v1.
+    AIRBYTE_API_BASE: ${AIRBYTE_API_BASE}
+    AIRBYTE_CLIENT_ID: ${AIRBYTE_CLIENT_ID:-}
+    AIRBYTE_CLIENT_SECRET: ${AIRBYTE_CLIENT_SECRET:-}
+    AIRBYTE_WORKSPACE_NAME: ${AIRBYTE_WORKSPACE_NAME:-Default Workspace}
+
+    # Read-only database users used by the Airbyte sources.
+    PAGILA_READER_PASSWORD: ${PAGILA_READER_PASSWORD}
+    SAKILA_READER_PASSWORD: ${SAKILA_READER_PASSWORD}
+
+    # Values used by the dbt profile and by the replication checks.
+    SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+    SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+    SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+    AIRFLOW_SF_USER: ${AIRFLOW_SF_USER}
+    AIRFLOW_SF_PASSWORD: ${AIRFLOW_SF_PASSWORD}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./sources:/opt/airflow/sources:ro
+    - ./dbt:/opt/airflow/dbt
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  user: "${AIRFLOW_UID:-50000}:0"
+
+services:
+  metadata-db:
+    image: postgres:16
+    container_name: sada-metadata-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=50"]
+    volumes:
+      - metadata-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  pagila-db:
+    image: postgres:16
+    container_name: sada-pagila-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pagila
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=50"]
+    ports:
+      - "5433:5432"
+    volumes:
+      - pagila-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pagila"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  sakila-db:
+    image: mysql:8.4
+    container_name: sada-sakila-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: sakila
+    command:
+      - --innodb-buffer-pool-size=64M
+      - --performance-schema=OFF
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # The Airbyte MySQL source connects without TLS; the native password
+      # plugin avoids the caching_sha2_password public-key exchange.
+      - --mysql-native-password=ON
+    ports:
+      - "3307:3306"
+    volumes:
+      - sakila-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: sada-airflow-init
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+    environment:
+      <<: *airflow-env
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL}
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "$${AIRFLOW_ADMIN_USERNAME}" \
+          --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email "$${AIRFLOW_ADMIN_EMAIL}" || true
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: sada-airflow-apiserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    command: api-server
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: sada-airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    command: scheduler
+    restart: unless-stopped
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: sada-airflow-dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    command: dag-processor
+    restart: unless-stopped
+
+volumes:
+  metadata-db-data:
+  pagila-db-data:
+  sakila-db-data:
