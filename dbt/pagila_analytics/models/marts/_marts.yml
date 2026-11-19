@@ -3,6 +3,25 @@ version: 2
 models:
   - name: dim_date
     description: Calendar dimension (one row per day, 2000-01-01 to 2030-12-31).
+    columns:
+      - name: date_day
+        description: Calendar date, one row per day.
+      - name: year
+        description: Calendar year.
+      - name: quarter
+        description: Calendar quarter (1-4).
+      - name: month
+        description: Calendar month number (1-12).
+      - name: month_name
+        description: English month name.
+      - name: day_of_month
+        description: Day number within the month.
+      - name: day_of_week
+        description: ISO day of week (1 = Monday, 7 = Sunday).
+      - name: day_name
+        description: Short English weekday name.
+      - name: is_weekend
+        description: True for Saturday and Sunday.
     data_tests:
       - unique:
           column_name: date_day
@@ -11,6 +30,27 @@ models:
 
   - name: dim_film
     description: Film dimension with language and category.
+    columns:
+      - name: film_id
+        description: Natural key of the film.
+      - name: title
+        description: Film title.
+      - name: release_year
+        description: Year the film was released.
+      - name: language_name
+        description: Original language of the film.
+      - name: category
+        description: Film category name.
+      - name: rating
+        description: MPAA rating.
+      - name: rental_rate
+        description: Rental price per day.
+      - name: rental_duration
+        description: Allowed rental period in days.
+      - name: length
+        description: Film length in minutes.
+      - name: replacement_cost
+        description: Cost to replace a lost copy.
     data_tests:
       - unique:
           column_name: film_id
@@ -19,6 +59,15 @@ models:
 
   - name: dim_actor
     description: Actor dimension.
+    columns:
+      - name: actor_id
+        description: Natural key of the actor.
+      - name: first_name
+        description: Actor first name.
+      - name: last_name
+        description: Actor last name.
+      - name: full_name
+        description: First and last name concatenated.
     data_tests:
       - unique:
           column_name: actor_id
@@ -27,6 +76,31 @@ models:
 
   - name: dim_customer
     description: Customer dimension with location attributes.
+    columns:
+      - name: customer_id
+        description: Natural key of the customer.
+      - name: full_name
+        description: Customer first and last name.
+      - name: email
+        description: Customer email address.
+      - name: activebool
+        description: Whether the customer is active (boolean).
+      - name: active
+        description: Whether the customer is active (1/0).
+      - name: address
+        description: Street address.
+      - name: district
+        description: Address district.
+      - name: postal_code
+        description: Postal code.
+      - name: city_id
+        description: Natural key of the city.
+      - name: city
+        description: City name.
+      - name: country
+        description: Country name.
+      - name: create_date
+        description: Date the customer record was created.
     data_tests:
       - unique:
           column_name: customer_id
@@ -35,6 +109,33 @@ models:
 
   - name: fact_rental
     description: One row per rental with duration measures.
+    columns:
+      - name: rental_id
+        description: Natural key of the rental.
+      - name: rental_date
+        description: Date the rental started.
+      - name: return_date
+        description: Date the rental was returned (NULL when not returned).
+      - name: rental_at
+        description: Timestamp the rental started.
+      - name: return_at
+        description: Timestamp the rental was returned.
+      - name: film_id
+        description: Film that was rented.
+      - name: customer_id
+        description: Customer who rented the film.
+      - name: store_id
+        description: Store the rental belongs to.
+      - name: staff_id
+        description: Staff member who handled the rental.
+      - name: days_rented
+        description: Whole days between rental and return.
+      - name: hours_rented
+        description: Hours between rental and return.
+      - name: is_returned
+        description: True when the rental has a return timestamp.
+      - name: rental_count
+        description: Constant 1, used to count rentals.
     data_tests:
       - unique:
           column_name: rental_id
@@ -50,9 +151,38 @@ models:
           arguments:
             to: ref('dim_customer')
             field: customer_id
+      - relationships:
+          column_name: rental_date
+          arguments:
+            to: ref('dim_date')
+            field: date_day
+      - relationships:
+          column_name: return_date
+          arguments:
+            to: ref('dim_date')
+            field: date_day
 
   - name: fact_revenue
     description: One row per payment with the related film and store.
+    columns:
+      - name: payment_id
+        description: Natural key of the payment.
+      - name: payment_date
+        description: Date the payment was made.
+      - name: payment_at
+        description: Timestamp the payment was made.
+      - name: customer_id
+        description: Customer who paid.
+      - name: staff_id
+        description: Staff member who processed the payment.
+      - name: store_id
+        description: Store the payment belongs to.
+      - name: film_id
+        description: Film linked through the rental (NULL when the payment has no rental).
+      - name: amount
+        description: Payment amount.
+      - name: payment_count
+        description: Constant 1, used to count payments.
     data_tests:
       - unique:
           column_name: payment_id
@@ -63,3 +193,13 @@ models:
           arguments:
             to: ref('dim_customer')
             field: customer_id
+      - relationships:
+          column_name: payment_date
+          arguments:
+            to: ref('dim_date')
+            field: date_day
+      - relationships:
+          column_name: film_id
+          arguments:
+            to: ref('dim_film')
+            field: film_id

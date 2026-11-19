@@ -35,6 +35,8 @@ SAKILA_EXPECTED_COUNTS: dict[str, int] = {
     "country": 109,
     "customer": 599,
     "film": 1000,
+    # Filled by triggers on film inserts; the dump has no direct INSERT.
+    "film_text": 1000,
     "film_actor": 5462,
     "film_category": 1000,
     "inventory": 4581,

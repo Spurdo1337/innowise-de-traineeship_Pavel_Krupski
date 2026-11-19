@@ -6,8 +6,8 @@
 #   sakila-db     Sakila source database (MySQL)
 #   airflow-*     Airflow 3 components (init, api-server, scheduler, dag-processor)
 #
-# Airbyte is installed separately (see README) and reaches the source
-# databases through the ports published below.
+# Airbyte Cloud is configured by airbyte/setup_airbyte.py (see README) and
+# reaches the source databases through the public tunnels.
 # ---------------------------------------------------------------------------
 
 x-airflow-common: &airflow-common
@@ -119,8 +119,8 @@ services:
       - --performance-schema=OFF
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      # The Airbyte MySQL source connects without TLS; the native password
-      # plugin avoids the caching_sha2_password public-key exchange.
+      # The Airbyte MySQL source uses TLS; the native password plugin avoids
+      # the caching_sha2_password public-key exchange.
       - --mysql-native-password=ON
     ports:
       - "3307:3306"

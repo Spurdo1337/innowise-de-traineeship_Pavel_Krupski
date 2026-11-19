@@ -1,11 +1,15 @@
 -- Calendar dimension built from the date spine variables in dbt_project.yml.
 -- Pagila has no calendar table, so the range is generated explicitly.
 
+{% set start = modules.datetime.date.fromisoformat(var('date_spine_start')) %}
+{% set end = modules.datetime.date.fromisoformat(var('date_spine_end')) %}
+{% set days = (end - start).days + 1 %}
+
 with date_spine as (
 
     select
         dateadd(day, seq4(), to_date('{{ var("date_spine_start") }}')) as date_day
-    from table(generator(rowcount => 11323))
+    from table(generator(rowcount => {{ days }}))
 
 )
 

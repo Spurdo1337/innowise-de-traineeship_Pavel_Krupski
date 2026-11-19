@@ -1,8 +1,8 @@
 """Build the Pagila dbt project after the raw data landed in Snowflake.
 
-The DAG runs ``dbt source freshness``, ``dbt build`` (models, tests, snapshot
-free) and verifies that Airflow is connected with the development role and
-that the analytics models produced rows.
+The DAG runs ``dbt source freshness``, ``dbt build`` (models and tests only)
+and verifies that Airflow is connected with the development role and that the
+analytics models produced rows.
 """
 
 from datetime import datetime

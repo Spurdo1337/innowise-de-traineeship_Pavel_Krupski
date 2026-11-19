@@ -215,12 +215,21 @@ DAGs are idempotent: re-running them rebuilds the source database from the dump.
 | marts | `dim_film`, `dim_actor`, `dim_customer`, `dim_date`, `fact_rental`, `fact_revenue` |
 | analytics | the seven queries from the SQL assignment |
 
+Task 7 is implemented as one row per city within each city group (cities starting with "a" and cities containing "-"), matching `sql_task_3/output/results.txt`.
+
 Run the project inside the Airflow image:
 
 ```bash
 docker compose exec airflow-scheduler bash -lc \
   "cd /opt/airflow/dbt/pagila_analytics && dbt build --profiles-dir . \
    --target-path /tmp/dbt-target --log-path /tmp/dbt-logs"
+```
+
+To verify the Snowflake connection before running the models:
+
+```bash
+docker compose exec airflow-scheduler bash -lc \
+  "cd /opt/airflow/dbt/pagila_analytics && dbt debug --profiles-dir ."
 ```
 
 The `/tmp` paths keep the container's manifest separate from any artifacts a
@@ -268,7 +277,7 @@ tests together.
 - `SELECT CURRENT_ROLE()` from an Airflow Snowflake task must return
   `SADA_DEV`.
 - `dbt source freshness` must pass for all 15 sources, and `dbt build` must
-  pass (31 models, 55 tests).
+  pass (31 models, 60 tests).
 - The analytics models must match the reference output from the SQL
   assignment (`sql_task_3/output/results.txt`).
 
@@ -280,9 +289,10 @@ tests together.
   needs the tunnels to be open. If a tunnel address changes, update
   `PAGILA_SOURCE_*` / `SAKILA_SOURCE_*` and run `airbyte/setup_airbyte.py`
   again.
-- The tunnels expose the databases while they are open. The `airbyte_reader`
-  users can only read, and their passwords are random, but the tunnels should
-  be closed when the replication is finished.
+- The tunnels are a training convenience, not a hardened setup: while they
+  are open, the database ports are reachable from outside, including the
+  superuser accounts. Close them immediately after a sync and do not reuse
+  this configuration outside the training environment.
 - If the Docker engine becomes unresponsive under memory pressure, restart
   Docker Desktop. Container data lives in volumes and survives the restart.
 - Source freshness is enforced: if the raw tables were last replicated more

@@ -22,12 +22,11 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = PROJECT_ROOT / ".env"
 
-# Base URL of the Airbyte API. Self-managed instances use
-# http://localhost:8000/api/public/v1, Airbyte Cloud uses
-# https://api.airbyte.com/v1.
-DEFAULT_API_BASE = "http://localhost:8000/api/public/v1"
+# Base URL of the Airbyte API. Airbyte Cloud uses the default below;
+# self-managed installations must override AIRBYTE_API_BASE.
+DEFAULT_API_BASE = "https://api.airbyte.com/v1"
 
-# Connector definition identifiers of the installed Airbyte version.
+# Connector definition identifiers used by the Airbyte Cloud workspace.
 POSTGRES_SOURCE_DEFINITION = "decd338e-5647-4c0b-adf4-da0e75f5a750"
 MYSQL_SOURCE_DEFINITION = "435bb9a5-7887-4809-aa58-28c27df0d7ad"
 SNOWFLAKE_DESTINATION_DEFINITION = "424892c4-daac-4491-b35d-c6688ba547ba"
@@ -246,10 +245,9 @@ def ensure_connection(
 
     existing = find_by_name(api.list("/connections"), name)
     if existing:
-        # Updating a connection triggers a new schema discovery on Airbyte 2.x,
-        # which is expensive on a local installation. The existing definition
-        # is left untouched; recreate it in the UI if the table selection
-        # really has to change.
+        # Updating a connection triggers a new schema discovery, which takes
+        # time. The existing definition is left untouched; recreate it in the
+        # UI if the table selection really has to change.
         print(f"connection  {name}: exists ({existing['connectionId']})")
         return existing["connectionId"]
 
@@ -351,13 +349,13 @@ def main() -> int:
         "pagila-postgres",
         POSTGRES_SOURCE_DEFINITION,
         {
-            "host": env.get("PAGILA_SOURCE_HOST", "host.docker.internal"),
-            "port": int(env.get("PAGILA_SOURCE_PORT", "5433")),
+            "host": env["PAGILA_SOURCE_HOST"],
+            "port": int(env["PAGILA_SOURCE_PORT"]),
             "database": "pagila",
             "username": "airbyte_reader",
             "password": env["PAGILA_READER_PASSWORD"],
             "schemas": ["public"],
-            "ssl_mode": {"mode": "disable"},
+            "ssl_mode": {"mode": "require"},
             "tunnel_method": {"tunnel_method": "NO_TUNNEL"},
             "replication_method": {"method": "Standard"},
         },
@@ -369,12 +367,12 @@ def main() -> int:
         "sakila-mysql",
         MYSQL_SOURCE_DEFINITION,
         {
-            "host": env.get("SAKILA_SOURCE_HOST", "host.docker.internal"),
-            "port": int(env.get("SAKILA_SOURCE_PORT", "3307")),
+            "host": env["SAKILA_SOURCE_HOST"],
+            "port": int(env["SAKILA_SOURCE_PORT"]),
             "database": "sakila",
             "username": "airbyte_reader",
             "password": env["SAKILA_READER_PASSWORD"],
-            "ssl": False,
+            "ssl_mode": {"mode": "required"},
             "tunnel_method": {"tunnel_method": "NO_TUNNEL"},
             "replication_method": {"method": "STANDARD"},
         },

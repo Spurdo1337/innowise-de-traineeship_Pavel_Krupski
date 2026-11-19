@@ -28,9 +28,5 @@ Thumbs.db
 .vscode/
 *.log
 
-# Local CLI tools (abctl, kubectl)
-abctl*/
-kubectl*/
-
 # Local TLS material
 sources/pagila/certs/
