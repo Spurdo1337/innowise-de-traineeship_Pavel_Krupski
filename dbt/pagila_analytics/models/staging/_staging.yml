@@ -1,0 +1,247 @@
+version: 2
+
+models:
+  - name: stg_actor
+    description: Actor records with explicit types.
+    columns:
+      - name: actor_id
+        description: Natural key of the actor.
+      - name: first_name
+        description: Actor first name.
+      - name: last_name
+        description: Actor last name.
+      - name: last_update
+        description: Timestamp of the last source update.
+    data_tests:
+      - unique:
+          column_name: actor_id
+      - not_null:
+          column_name: actor_id
+
+  - name: stg_address
+    description: Addresses with city references.
+    columns:
+      - name: address_id
+        description: Natural key of the address.
+      - name: city_id
+        description: City the address belongs to.
+      - name: postal_code
+        description: Postal code.
+    data_tests:
+      - unique:
+          column_name: address_id
+      - not_null:
+          column_name: address_id
+
+  - name: stg_category
+    description: Film categories.
+    columns:
+      - name: category_id
+        description: Natural key of the category.
+      - name: category_name
+        description: Category name.
+    data_tests:
+      - unique:
+          column_name: category_id
+      - not_null:
+          column_name: category_name
+
+  - name: stg_city
+    description: Cities with country references.
+    columns:
+      - name: city_id
+        description: Natural key of the city.
+      - name: city
+        description: City name.
+      - name: country_id
+        description: Country the city belongs to.
+    data_tests:
+      - unique:
+          column_name: city_id
+      - not_null:
+          column_name: city
+
+  - name: stg_country
+    description: Countries.
+    columns:
+      - name: country_id
+        description: Natural key of the country.
+      - name: country
+        description: Country name.
+    data_tests:
+      - unique:
+          column_name: country_id
+      - not_null:
+          column_name: country
+
+  - name: stg_customer
+    description: Customers with address and activity flags.
+    columns:
+      - name: customer_id
+        description: Natural key of the customer.
+      - name: address_id
+        description: Address of the customer.
+      - name: activebool
+        description: Whether the customer is active (boolean).
+      - name: active
+        description: Whether the customer is active (1/0).
+      - name: create_date
+        description: Date the customer record was created.
+    data_tests:
+      - unique:
+          column_name: customer_id
+      - not_null:
+          column_name: customer_id
+
+  - name: stg_film
+    description: Films with category-independent attributes.
+    columns:
+      - name: film_id
+        description: Natural key of the film.
+      - name: title
+        description: Film title.
+      - name: rental_rate
+        description: Rental price per day.
+      - name: rental_duration
+        description: Allowed rental period in days.
+      - name: rating
+        description: MPAA rating.
+      - name: replacement_cost
+        description: Cost to replace a lost copy.
+    data_tests:
+      - unique:
+          column_name: film_id
+      - not_null:
+          column_name: title
+      - accepted_values:
+          column_name: rating
+          arguments:
+            values: ['G', 'PG', 'PG-13', 'R', 'NC-17']
+
+  - name: stg_film_actor
+    description: Film to actor assignments.
+    columns:
+      - name: film_id
+        description: Film reference.
+      - name: actor_id
+        description: Actor reference.
+    data_tests:
+      - not_null:
+          column_name: film_id
+      - not_null:
+          column_name: actor_id
+
+  - name: stg_film_category
+    description: Film to category assignments.
+    columns:
+      - name: film_id
+        description: Film reference.
+      - name: category_id
+        description: Category reference.
+    data_tests:
+      - unique:
+          column_name: film_id
+      - not_null:
+          column_name: category_id
+
+  - name: stg_inventory
+    description: Inventory items per store.
+    columns:
+      - name: inventory_id
+        description: Natural key of the inventory item.
+      - name: film_id
+        description: Film the item represents.
+      - name: store_id
+        description: Store that owns the item.
+    data_tests:
+      - unique:
+          column_name: inventory_id
+      - not_null:
+          column_name: film_id
+
+  - name: stg_language
+    description: Film languages.
+    columns:
+      - name: language_id
+        description: Natural key of the language.
+      - name: language_name
+        description: Language name.
+    data_tests:
+      - unique:
+          column_name: language_id
+      - not_null:
+          column_name: language_name
+
+  - name: stg_payment
+    description: Payments; the Airbyte table returns the rows of the payment partitions.
+    columns:
+      - name: payment_id
+        description: Natural key of the payment.
+      - name: rental_id
+        description: Rental the payment belongs to.
+      - name: customer_id
+        description: Customer who paid.
+      - name: amount
+        description: Payment amount.
+      - name: payment_date
+        description: Timestamp of the payment.
+    data_tests:
+      - unique:
+          column_name: payment_id
+      - not_null:
+          column_name: payment_id
+      - not_null:
+          column_name: amount
+
+  - name: stg_rental
+    description: Rentals with rental and return timestamps.
+    columns:
+      - name: rental_id
+        description: Natural key of the rental.
+      - name: inventory_id
+        description: Inventory item that was rented.
+      - name: customer_id
+        description: Customer who rented the item.
+      - name: rental_date
+        description: Timestamp the rental started.
+      - name: return_date
+        description: Timestamp the rental was returned (NULL when not returned).
+      - name: staff_id
+        description: Staff member who handled the rental.
+    data_tests:
+      - unique:
+          column_name: rental_id
+      - not_null:
+          column_name: rental_id
+      - not_null:
+          column_name: rental_date
+
+  - name: stg_staff
+    description: Staff members.
+    columns:
+      - name: staff_id
+        description: Natural key of the staff member.
+      - name: store_id
+        description: Store the staff member works at.
+      - name: active
+        description: Whether the staff member is active.
+    data_tests:
+      - unique:
+          column_name: staff_id
+      - not_null:
+          column_name: staff_id
+
+  - name: stg_store
+    description: Stores.
+    columns:
+      - name: store_id
+        description: Natural key of the store.
+      - name: manager_staff_id
+        description: Staff member who manages the store.
+      - name: address_id
+        description: Address of the store.
+    data_tests:
+      - unique:
+          column_name: store_id
+      - not_null:
+          column_name: store_id

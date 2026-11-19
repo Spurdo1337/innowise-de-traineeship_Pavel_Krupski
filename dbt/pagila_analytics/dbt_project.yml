@@ -1,0 +1,30 @@
+name: pagila_analytics
+version: "1.0.0"
+config-version: 2
+
+profile: pagila_analytics
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  pagila_analytics:
+    staging:
+      +materialized: view
+      +schema: STAGING
+    intermediate:
+      +materialized: view
+      +schema: INTERMEDIATE
+    marts:
+      +materialized: table
+      +schema: MARTS
+    analytics:
+      +materialized: view
+      +schema: ANALYTICS
+
+vars:
+  date_spine_start: "2000-01-01"
+  date_spine_end: "2030-12-31"

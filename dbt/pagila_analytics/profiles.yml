@@ -1,0 +1,14 @@
+pagila_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('AIRFLOW_SF_USER') }}"
+      password: "{{ env_var('AIRFLOW_SF_PASSWORD') }}"
+      role: SADA_DEV
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'SADA') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'SADA_WH') }}"
+      schema: ANALYTICS
+      threads: 4
+      client_session_keep_alive: false

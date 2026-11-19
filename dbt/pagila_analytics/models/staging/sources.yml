@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: pagila
+    description: Raw Pagila tables replicated by Airbyte from the source database.
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'SADA') }}"
+    schema: PAGILA_RAW
+    # Airbyte adds the extraction timestamp to every normalised table.
+    # Freshness therefore measures the last replication, not the age of the
+    # (static) 2005 sample data.
+    config:
+      loaded_at_field: _airbyte_extracted_at
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 72, period: hour}
+    tables:
+      - name: actor
+      - name: address
+      - name: category
+      - name: city
+      - name: country
+      - name: customer
+      - name: film
+      - name: film_actor
+      - name: film_category
+      - name: inventory
+      - name: language
+      - name: payment
+      - name: rental
+      - name: staff
+      - name: store
